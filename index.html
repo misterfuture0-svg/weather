@@ -90,7 +90,7 @@ footer a{color:#cfe3f8}
 <script>
 const WC={0:['Clear sky','☀️'],1:['Mostly clear','🌤️'],2:['Partly cloudy','⛅'],3:['Overcast','☁️'],45:['Fog','🌫️'],48:['Rime fog','🌫️'],51:['Light drizzle','🌦️'],53:['Drizzle','🌦️'],55:['Heavy drizzle','🌧️'],56:['Freezing drizzle','🌧️'],57:['Freezing drizzle','🌧️'],61:['Light rain','🌦️'],63:['Rain','🌧️'],65:['Heavy rain','🌧️'],66:['Freezing rain','🌧️'],67:['Freezing rain','🌧️'],71:['Light snow','🌨️'],73:['Snow','❄️'],75:['Heavy snow','❄️'],77:['Snow grains','❄️'],80:['Rain showers','🌦️'],81:['Rain showers','🌧️'],82:['Violent showers','⛈️'],85:['Snow showers','🌨️'],86:['Snow showers','🌨️'],95:['Thunderstorm','⛈️'],96:['Thunderstorm, hail','⛈️'],99:['Thunderstorm, hail','⛈️']};
 const CITIES=[['Tashkent','Uzbekistan',41.31,69.24],['London','UK',51.51,-0.13],['New York','USA',40.71,-74.01],['Tokyo','Japan',35.68,139.69],['Dubai','UAE',25.2,55.27],['Moscow','Russia',55.76,37.62],['Istanbul','Türkiye',41.01,28.98],['Sydney','Australia',-33.87,151.21],['Cairo','Egypt',30.04,31.24],['Sao Paulo','Brazil',-23.55,-46.63],['Delhi','India',28.61,77.21],['Reykjavik','Iceland',64.15,-21.94]];
-let F=localStorageGet('unit')==='F',cur=null,data=null;
+let F=localStorageGet('unit')==='F',cur=null,data=null,last=null;
 function localStorageGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
 function localStorageSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 const $=id=>document.getElementById(id);
@@ -105,13 +105,28 @@ function sky(code,day){let a,b;
  else if([3,45,48].includes(code)){a='#5b7893';b='#b7c8d8'}
  else {a='#1f6fc0';b='#9ed2f5'}
  const r=$('hero').style;r.setProperty('--sky1',a);r.setProperty('--sky2',b)}
+async function getJSON(url,tries=3){
+ for(let i=0;i<tries;i++){
+  try{
+   const ac=new AbortController(),t=setTimeout(()=>ac.abort(),10000);
+   const r=await fetch(url,{signal:ac.signal});clearTimeout(t);
+   if(r.ok)return await r.json();
+  }catch(e){}
+  await new Promise(z=>setTimeout(z,700*(i+1)));
+ }
+ throw new Error('failed');
+}
 async function load(p){
+ last=p;$('place').textContent=p.name;$('local').textContent='Loading…';
+ const key='wx:'+p.lat.toFixed(2)+','+p.lon.toFixed(2);
  try{
-  $('place').textContent=p.name;
-  const r=await fetch(API+`&latitude=${p.lat}&longitude=${p.lon}`);
-  if(!r.ok)throw 0;
-  data=await r.json();cur=p;render();
- }catch(e){$('days').innerHTML='<p class="err">Could not load the forecast. Check your connection and try again.</p>'}}
+  data=await getJSON(API+`&latitude=${p.lat}&longitude=${p.lon}`);cur=p;render();
+  localStorageSet(key,JSON.stringify(data));
+ }catch(e){
+  const c=localStorageGet(key);
+  if(c){data=JSON.parse(c);cur=p;render();$('local').textContent='No connection to the weather service. Showing the last saved forecast.'}
+  else $('days').innerHTML='<p class="err">Could not load the forecast. The weather service may be busy or blocked on your network. <button class="btn" onclick="load(last)">Try again</button></p>'
+ }}
 function render(){
  const c=data.current,d=data.daily,w=WC[c.weather_code]||['—',''];
  $('place').textContent=cur.name;
@@ -130,20 +145,20 @@ function render(){
   return `<div class="day"><span class="n">${n}</span><span title="${x[0]}">${x[1]}</span><div class="range"><span class="lo">${T(d.temperature_2m_min[i])}°</span><div class="track"><div class="fill" style="left:${l}%;right:${100-r}%"></div></div><span class="hi">${T(d.temperature_2m_max[i])}°</span></div><span class="meta">💧 ${d.relative_humidity_2m_mean[i]}% · 💨 ${W(d.wind_speed_10m_max[i])}</span></div>`}).join('')}
 async function loadWorld(){
  try{
-  const r=await fetch(API.replace('&forecast_days=7','&forecast_days=1')+`&latitude=${CITIES.map(c=>c[2]).join(',')}&longitude=${CITIES.map(c=>c[3]).join(',')}`);
-  window.WD=await r.json();drawWorld();
- }catch(e){}}
+  window.WD=await getJSON(API.replace('&forecast_days=7','&forecast_days=1')+`&latitude=${CITIES.map(c=>c[2]).join(',')}&longitude=${CITIES.map(c=>c[3]).join(',')}`);
+  drawWorld();
+ }catch(e){$('world').innerHTML='<p class="err" style="grid-column:1/-1">Could not load the world cities. <button class="btn" onclick="loadWorld()">Try again</button></p>'}}
 function drawWorld(){
  if(!window.WD)return;
  $('world').innerHTML=CITIES.map((c,i)=>{const k=WD[i].current;return `<button class="city" data-i="${i}"><span class="t">${T(k.temperature_2m)}°</span><b>${c[0]}</b><small>${(WC[k.weather_code]||['',''])[1]} ${(WC[k.weather_code]||['—'])[0]}</small></button>`}).join('')}
 $('world').onclick=e=>{const b=e.target.closest('.city');if(!b)return;const c=CITIES[b.dataset.i];load({name:c[0],country:c[1],lat:c[2],lon:c[3]});scrollTo({top:0,behavior:'smooth'})};
 let tm;$('q').oninput=e=>{clearTimeout(tm);const v=e.target.value.trim();if(v.length<2){$('sugg').hidden=true;return}
- tm=setTimeout(async()=>{try{const r=await(await fetch('https://geocoding-api.open-meteo.com/v1/search?count=6&name='+encodeURIComponent(v))).json();
+ tm=setTimeout(async()=>{try{const r=await getJSON('https://geocoding-api.open-meteo.com/v1/search?count=6&name='+encodeURIComponent(v),2);
   const L=r.results||[];$('sugg').innerHTML=L.length?L.map((x,i)=>`<button data-i="${i}">${x.name}${x.admin1?', '+x.admin1:''} — ${x.country||''}</button>`).join(''):'<button disabled>No city found</button>';
-  $('sugg').hidden=false;$('sugg').onclick=ev=>{const b=ev.target.closest('button');if(!b||b.disabled)return;const x=L[b.dataset.i];$('sugg').hidden=true;$('q').value='';load({name:x.name,country:x.country,lat:x.latitude,lon:x.longitude})}}catch(e){}},250)};
+  $('sugg').hidden=false;$('sugg').onclick=ev=>{const b=ev.target.closest('button');if(!b||b.disabled)return;const x=L[b.dataset.i];$('sugg').hidden=true;$('q').value='';load({name:x.name,country:x.country,lat:x.latitude,lon:x.longitude})}}catch(e){$('sugg').innerHTML='<button disabled>Search is unavailable right now. Try again.</button>';$('sugg').hidden=false}},250)};
 document.addEventListener('click',e=>{if(!e.target.closest('.tools'))$('sugg').hidden=true});
 $('unit').onclick=()=>{F=!F;localStorageSet('unit',F?'F':'C');$('unit').textContent=F?'°F':'°C';if(data)render();drawWorld()};
-$('geo').onclick=()=>{if(!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(p=>load({name:'Your location',country:'',lat:p.coords.latitude,lon:p.coords.longitude}),()=>{})};
+$('geo').onclick=()=>{if(!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(p=>load({name:'Your location',country:'',lat:p.coords.latitude,lon:p.coords.longitude}),()=>{$('local').textContent='Location is blocked in your browser. Search for a city instead.'})};
 $('unit').textContent=F?'°F':'°C';
 load({name:'Tashkent',country:'Uzbekistan',lat:41.31,lon:69.24});loadWorld();
 </script>
